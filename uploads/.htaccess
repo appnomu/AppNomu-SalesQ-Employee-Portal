@@ -1,0 +1,15 @@
+# Simple uploads directory access - no restrictions
+
+# Set proper MIME types for document viewing
+AddType application/pdf .pdf
+AddType application/msword .doc
+AddType application/vnd.openxmlformats-officedocument.wordprocessingml.document .docx
+AddType image/jpeg .jpg .jpeg
+AddType image/png .png
+AddType image/gif .gif
+
+# Prevent PHP execution for security
+<Files "*.php">
+    Order allow,deny
+    Deny from all
+</Files>

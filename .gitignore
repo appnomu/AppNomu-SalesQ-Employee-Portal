@@ -1,0 +1,121 @@
+# EP Portal - AppNomu SalesQ Employee Portal
+# .gitignore - Protect sensitive files and data
+
+# ============================================
+# CRITICAL: Environment & Configuration Files
+# ============================================
+.env
+.env.local
+.env.production
+.env.*.local
+config/database.php
+*-credentials.php
+*-secrets.php
+
+# ============================================
+# Database Files (Contains sensitive data)
+# ============================================
+*.sql
+*.sql.gz
+*.sql.zip
+database/*.sql
+database/backups/
+database/dumps/
+
+# ============================================
+# Uploaded Files (User data & documents)
+# ============================================
+uploads/*
+!uploads/.gitkeep
+!uploads/.htaccess
+
+# ============================================
+# Logs & Debug Files
+# ============================================
+*.log
+logs/
+error_log
+debug.log
+php_errors.log
+cron/*.log
+*.lock
+
+# ============================================
+# Temporary & Cache Files
+# ============================================
+tmp/
+temp/
+cache/
+*.tmp
+*.cache
+*.bak
+*.swp
+*.swo
+*~
+
+# ============================================
+# IDE & Editor Files
+# ============================================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+*.iml
+
+# ============================================
+# Composer & Dependencies
+# ============================================
+vendor/
+composer.lock
+
+# ============================================
+# Node Modules (if using npm/yarn)
+# ============================================
+node_modules/
+package-lock.json
+yarn.lock
+
+# ============================================
+# Test & Development Files
+# ============================================
+test/
+tests/
+phpunit.xml
+.phpunit.result.cache
+
+# ============================================
+# Backup Files
+# ============================================
+*.backup
+*.old
+*-backup.*
+*-old.*
+
+# ============================================
+# OS Generated Files
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ============================================
+# Security & Session Files
+# ============================================
+sessions/
+*.session
+.htpasswd
+
+# ============================================
+# Documentation Drafts (keep final docs)
+# ============================================
+drafts/
+notes/
+TODO.md
+NOTES.md

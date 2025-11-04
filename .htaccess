@@ -1,0 +1,131 @@
+# EP Portal - Security Configuration
+
+# Simple and reliable rewrite configuration
+RewriteEngine On
+
+# HTTPS Enforcement (if needed)
+# RewriteCond %{HTTPS} off
+# RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# External redirects from .php to clean URLs
+RewriteCond %{THE_REQUEST} \s/+(.+)\.php[\s?] [NC]
+RewriteRule ^ /%1 [R=301,L]
+
+# Internal rewrites from clean URLs to .php files
+# Admin section
+RewriteRule ^admin/dashboard$ admin/dashboard.php [L]
+RewriteRule ^admin/employees$ admin/employees.php [L]
+RewriteRule ^admin/leave-requests$ admin/leave-requests.php [L]
+RewriteRule ^admin/tasks$ admin/tasks.php [L]
+RewriteRule ^admin/tickets$ admin/tickets.php [L]
+RewriteRule ^admin/settings$ admin/settings.php [L]
+RewriteRule ^admin/reports$ admin/reports.php [L]
+RewriteRule ^admin/salary-management$ admin/salary-management.php [L]
+RewriteRule ^admin/withdrawals$ admin/withdrawals.php [L]
+RewriteRule ^admin/documents$ admin/documents.php [L]
+RewriteRule ^admin/salary-cron-monitor$ admin/salary-cron-monitor.php [L]
+RewriteRule ^admin/reminder-status$ admin/reminder-status.php [L]
+RewriteRule ^admin/ticket-details$ admin/ticket-details.php [L]
+
+# Employee section
+RewriteRule ^employee/dashboard$ employee/dashboard.php [L]
+RewriteRule ^employee/profile$ employee/profile.php [L]
+RewriteRule ^employee/leave-requests$ employee/leave-requests.php [L]
+RewriteRule ^employee/tasks$ employee/tasks.php [L]
+RewriteRule ^employee/tickets$ employee/tickets.php [L]
+RewriteRule ^employee/withdrawal-salary$ employee/withdrawal-salary.php [L]
+RewriteRule ^employee/withdrawals$ employee/withdrawals.php [L]
+RewriteRule ^employee/documents$ employee/documents.php [L]
+RewriteRule ^employee/reminders$ employee/reminders.php [L]
+RewriteRule ^employee/mark-notification-read$ employee/mark-notification-read.php [L]
+RewriteRule ^employee/get-leave-details$ employee/get-leave-details.php [L]
+RewriteRule ^employee/ticket-details$ employee/ticket-details.php [L]
+
+# Auth section
+RewriteRule ^auth/login$ auth/login.php [L]
+RewriteRule ^auth/logout$ auth/logout.php [L]
+RewriteRule ^auth/verify-otp$ auth/verify-otp.php [L]
+
+# API endpoints
+RewriteRule ^api/get-task$ api/get-task.php [L]
+RewriteRule ^api/get-employee$ api/get-employee.php [L]
+RewriteRule ^api/get-employee-clean$ api/get-employee-clean.php [L]
+RewriteRule ^api/get-leave-request$ api/get-leave-request.php [L]
+RewriteRule ^api/get-ticket$ api/get-ticket.php [L]
+RewriteRule ^api/get-withdrawal$ api/get-withdrawal.php [L]
+RewriteRule ^api/respond-ticket$ api/respond-ticket.php [L]
+RewriteRule ^api/update-task$ api/update-task.php [L]
+RewriteRule ^api/reset-employee-password$ api/reset-employee-password.php [L]
+RewriteRule ^api/flutterwave-callback$ api/flutterwave-callback.php [L]
+
+# Root level files
+RewriteRule ^index$ index.php [L]
+
+# Fallback for non-existent pages - redirect to login
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_URI} !^/uploads/
+RewriteCond %{REQUEST_URI} !^/auth/login$
+RewriteRule .* /auth/login [R=302,L]
+
+# Custom Error Handling - Allow uploads directory access
+ErrorDocument 404 /auth/login
+ErrorDocument 500 /auth/login
+
+# Security Headers
+Header always set X-Content-Type-Options nosniff
+Header always set X-Frame-Options SAMEORIGIN
+Header always set X-XSS-Protection "1; mode=block"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' cdn.jsdelivr.net cdnjs.cloudflare.com static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' cdn.jsdelivr.net cdnjs.cloudflare.com fonts.googleapis.com; font-src 'self' fonts.gstatic.com cdnjs.cloudflare.com; img-src 'self' data: https: blob:; connect-src 'self' static.cloudflareinsights.com; frame-src 'self' blob:; frame-ancestors 'self';"
+Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=()"
+
+# Prevent access to sensitive files
+<Files "*.md">
+    Order allow,deny
+    Deny from all
+</Files>
+
+<Files "*.sql">
+    Order allow,deny
+    Deny from all
+</Files>
+
+<Files ".env">
+    Order allow,deny
+    Deny from all
+</Files>
+
+<Files ".env.*">
+    Order allow,deny
+    Deny from all
+</Files>
+
+# Prevent directory browsing
+Options -Indexes
+
+# Cache static assets
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 1 month"
+    ExpiresByType application/javascript "access plus 1 month"
+    ExpiresByType image/png "access plus 1 month"
+    ExpiresByType image/jpg "access plus 1 month"
+    ExpiresByType image/jpeg "access plus 1 month"
+    ExpiresByType image/gif "access plus 1 month"
+    ExpiresByType image/svg+xml "access plus 1 month"
+</IfModule>
+
+# Gzip compression
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/plain
+    AddOutputFilterByType DEFLATE text/html
+    AddOutputFilterByType DEFLATE text/xml
+    AddOutputFilterByType DEFLATE text/css
+    AddOutputFilterByType DEFLATE application/xml
+    AddOutputFilterByType DEFLATE application/xhtml+xml
+    AddOutputFilterByType DEFLATE application/rss+xml
+    AddOutputFilterByType DEFLATE application/javascript
+    AddOutputFilterByType DEFLATE application/x-javascript
+</IfModule>
