@@ -119,13 +119,12 @@ See `.env.example` for all required configuration options.
 
 ## 👤 Default Admin Account
 
-After database import, login with:
+After database import, a default admin account is created:
 
-- **Email:** `info@appnomu.com`
-- **Password:** `UgandanN256@`
 - **Employee Number:** `EP-ADMIN001`
+- **Email:** Contact system administrator for credentials
 
-**⚠️ IMPORTANT:** Change the default password immediately after first login!
+**⚠️ SECURITY:** Default credentials should be changed immediately upon first login. For initial setup, contact your system administrator or refer to your private deployment documentation.
 
 ## 📱 Features Overview
 
