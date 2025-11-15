@@ -178,6 +178,185 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 logActivity($_SESSION['user_id'], 'database_backup', 'system_backup', 0, "Database backup initiated");
                 $_SESSION['success_message'] = "Database backup initiated successfully.";
                 break;
+                
+            case 'create_admin':
+                // Handle creating new admin account
+                $firstName = sanitizeInput($_POST['first_name']);
+                $lastName = sanitizeInput($_POST['last_name']);
+                $email = sanitizeInput($_POST['email']);
+                $phone = formatPhoneNumber(sanitizeInput($_POST['phone']));
+                $department = sanitizeInput($_POST['department']);
+                $position = sanitizeInput($_POST['position']);
+                
+                $errors = [];
+                
+                if (empty($firstName) || empty($lastName) || empty($email) || empty($phone)) {
+                    $_SESSION['error_message'] = 'Please fill in all required fields';
+                    break;
+                }
+                
+                if (!isValidEmail($email)) {
+                    $_SESSION['error_message'] = 'Please enter a valid email address';
+                    break;
+                }
+                
+                if (!isValidPhone($phone)) {
+                    $_SESSION['error_message'] = 'Please enter a valid phone number';
+                    break;
+                }
+                
+                // Check if email or phone already exists
+                $stmt = $db->prepare("SELECT id FROM users WHERE email = ? OR phone = ?");
+                $stmt->execute([$email, $phone]);
+                if ($stmt->fetch()) {
+                    $_SESSION['error_message'] = 'Email or phone number already exists';
+                    break;
+                }
+                
+                try {
+                    $db->beginTransaction();
+                    
+                    // Generate employee number for admin
+                    do {
+                        $employeeNumber = generateEmployeeNumber();
+                        $stmt = $db->prepare("SELECT id FROM users WHERE employee_number = ?");
+                        $stmt->execute([$employeeNumber]);
+                    } while ($stmt->fetch());
+                    
+                    // Generate temporary password
+                    $tempPassword = generateSecureToken(12);
+                    $hashedPassword = hashPassword($tempPassword);
+                    
+                    // Create admin user account
+                    $stmt = $db->prepare("
+                        INSERT INTO users (employee_number, email, phone, password_hash, role, status) 
+                        VALUES (?, ?, ?, ?, 'admin', 'active')
+                    ");
+                    $stmt->execute([$employeeNumber, $email, $phone, $hashedPassword]);
+                    $userId = $db->lastInsertId();
+                    
+                    // Create employee profile
+                    $stmt = $db->prepare("
+                        INSERT INTO employee_profiles (user_id, first_name, last_name, department, position) 
+                        VALUES (?, ?, ?, ?, ?)
+                    ");
+                    $stmt->execute([$userId, $firstName, $lastName, $department, $position]);
+                    
+                    // Log activity
+                    logActivity($_SESSION['user_id'], 'admin_created', 'users', $userId, "New admin created: $employeeNumber");
+                    
+                    $db->commit();
+                    
+                    // Send welcome email with credentials
+                    try {
+                        require_once '../includes/infobip.php';
+                        $infobip = new InfobipAPI();
+                        $subject = 'Admin Account Created - AppNomu SalesQ Employee Portal';
+                        $message = "
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
+</head>
+<body style='margin:0;padding:0;background-color:#f5f5f5;font-family:Arial,sans-serif;'>
+<table width='100%' cellpadding='0' cellspacing='0' border='0' style='background-color:#f5f5f5;'>
+<tr><td align='center' style='padding:20px 10px;'>
+<table width='100%' cellpadding='0' cellspacing='0' border='0' style='max-width:600px;background-color:#ffffff;'>
+<tr><td style='background-color:#dc3545;padding:20px;text-align:center;'>
+<h1 style='margin:0;color:#ffffff;font-size:20px;font-weight:600;'>Admin Account Created</h1>
+<p style='margin:5px 0 0 0;color:#ffcccc;font-size:13px;'>AppNomu SalesQ Employee Portal</p>
+</td></tr>
+<tr><td style='padding:30px 20px;'>
+<p style='margin:0 0 15px 0;color:#333;font-size:15px;'>Dear <strong>$firstName $lastName</strong>,</p>
+<p style='margin:0 0 20px 0;color:#555;font-size:14px;line-height:1.5;'>An administrator account has been created for you with full system access.</p>
+<table width='100%' cellpadding='15' cellspacing='0' border='0' style='background-color:#fff5f5;border-left:4px solid #dc3545;margin:20px 0;'>
+<tr><td>
+<p style='margin:0 0 12px 0;color:#dc3545;font-size:13px;font-weight:bold;'>Your Admin Login Credentials</p>
+<p style='margin:0 0 8px 0;color:#666;font-size:11px;'>EMPLOYEE NUMBER</p>
+<p style='margin:0 0 15px 0;color:#dc3545;font-size:16px;font-weight:bold;font-family:monospace;'>$employeeNumber</p>
+<p style='margin:0 0 8px 0;color:#666;font-size:11px;'>EMAIL</p>
+<p style='margin:0 0 15px 0;color:#dc3545;font-size:14px;font-weight:bold;word-break:break-all;'>$email</p>
+<p style='margin:0 0 8px 0;color:#666;font-size:11px;'>PASSWORD</p>
+<p style='margin:0;color:#dc3545;font-size:16px;font-weight:bold;font-family:monospace;word-break:break-all;'>$tempPassword</p>
+</td></tr>
+</table>
+<table width='100%' cellpadding='12' cellspacing='0' border='0' style='background-color:#fff3e0;border-left:3px solid #ff9800;margin:20px 0;'>
+<tr><td>
+<p style='margin:0 0 5px 0;color:#e65100;font-size:12px;font-weight:bold;'>Important Security Notice:</p>
+<p style='margin:0;color:#555;font-size:12px;line-height:1.5;'>As an administrator, you have full access to the system. Keep these credentials secure and change your password after first login.</p>
+</td></tr>
+</table>
+</td></tr>
+<tr><td style='background-color:#263238;padding:25px 20px;text-align:center;'>
+<p style='margin:0 0 10px 0;color:#ffffff;font-size:15px;font-weight:bold;'>AppNomu SalesQ</p>
+<p style='margin:0;color:#90a4ae;font-size:12px;'>© 2025 AppNomu SalesQ. All rights reserved.</p>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+                        ";
+                        $infobip->sendEmail($email, $subject, $message);
+                    } catch (Exception $e) {
+                        // Email failed but admin was created
+                        error_log("Failed to send admin welcome email: " . $e->getMessage());
+                    }
+                    
+                    $_SESSION['success_message'] = "Admin account created successfully! Employee Number: $employeeNumber | Password: $tempPassword";
+                } catch (Exception $e) {
+                    $db->rollBack();
+                    $_SESSION['error_message'] = 'Failed to create admin account: ' . $e->getMessage();
+                }
+                break;
+                
+            case 'demote_to_employee':
+                // Handle demoting admin to employee
+                $userId = intval($_POST['user_id']);
+                
+                try {
+                    // Verify user exists and is currently an admin
+                    $stmt = $db->prepare("SELECT id, role, employee_number FROM users WHERE id = ?");
+                    $stmt->execute([$userId]);
+                    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+                    
+                    if (!$user) {
+                        $_SESSION['error_message'] = "User not found.";
+                        break;
+                    }
+                    
+                    if ($user['role'] !== 'admin') {
+                        $_SESSION['error_message'] = "User is not an admin.";
+                        break;
+                    }
+                    
+                    // Prevent demoting yourself
+                    if ($userId === $_SESSION['user_id']) {
+                        $_SESSION['error_message'] = "You cannot demote yourself.";
+                        break;
+                    }
+                    
+                    // Check if this is the last admin
+                    $stmt = $db->prepare("SELECT COUNT(*) as admin_count FROM users WHERE role = 'admin'");
+                    $stmt->execute();
+                    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+                    
+                    if ($result['admin_count'] <= 1) {
+                        $_SESSION['error_message'] = "Cannot demote the last admin. At least one admin must remain.";
+                        break;
+                    }
+                    
+                    // Demote to employee
+                    $stmt = $db->prepare("UPDATE users SET role = 'employee' WHERE id = ?");
+                    $stmt->execute([$userId]);
+                    
+                    logActivity($_SESSION['user_id'], 'admin_demoted_to_employee', 'users', $userId, "Admin {$user['employee_number']} demoted to employee");
+                    $_SESSION['success_message'] = "Admin successfully demoted to employee.";
+                } catch (Exception $e) {
+                    $_SESSION['error_message'] = "Failed to demote admin: " . $e->getMessage();
+                }
+                break;
         }
         
         header('Location: settings.php');
@@ -223,6 +402,21 @@ $stmt = $db->prepare("
 ");
 $stmt->execute();
 $systemStats = $stmt->fetch(PDO::FETCH_ASSOC);
+
+// Get all admin users for admin management
+$stmt = $db->prepare("
+    SELECT u.id, u.employee_number, u.email, u.role, u.status, u.created_at,
+           ep.first_name, ep.last_name, ep.department, ep.position
+    FROM users u
+    LEFT JOIN employee_profiles ep ON u.id = ep.user_id
+    WHERE u.role = 'admin'
+    ORDER BY u.created_at DESC
+");
+$stmt->execute();
+$adminUsers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Count admins
+$adminCount = count($adminUsers);
 ?>
 
 <!DOCTYPE html>
@@ -666,6 +860,151 @@ $systemStats = $stmt->fetch(PDO::FETCH_ASSOC);
                                     Server Time: <?php echo date('Y-m-d H:i:s'); ?>
                                 </small>
                             </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Admin Management -->
+                    <div class="settings-card">
+                        <h5 class="mb-4"><i class="fas fa-user-shield me-2"></i>Admin Management</h5>
+                        <p class="text-muted">Create and manage administrator accounts</p>
+                        
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Current Admins:</strong> <?php echo $adminCount; ?>
+                        </div>
+                        
+                        <!-- Create New Admin Form -->
+                        <div class="card border-primary mb-4">
+                            <div class="card-header bg-primary text-white">
+                                <h6 class="mb-0"><i class="fas fa-plus-circle me-2"></i>Create New Admin Account</h6>
+                            </div>
+                            <div class="card-body">
+                                <form method="POST">
+                                    <input type="hidden" name="action" value="create_admin">
+                                    
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">First Name <span class="text-danger">*</span></label>
+                                                <input type="text" class="form-control" name="first_name" required>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Last Name <span class="text-danger">*</span></label>
+                                                <input type="text" class="form-control" name="last_name" required>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Email Address <span class="text-danger">*</span></label>
+                                                <input type="email" class="form-control" name="email" required>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Phone Number <span class="text-danger">*</span></label>
+                                                <input type="tel" class="form-control" name="phone" placeholder="+256700000000" required>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Department</label>
+                                                <input type="text" class="form-control" name="department" value="Administration">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Position</label>
+                                                <input type="text" class="form-control" name="position" value="System Administrator">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="alert alert-warning">
+                                        <i class="fas fa-info-circle me-2"></i>
+                                        <small>A temporary password will be generated and sent to the admin's email address.</small>
+                                    </div>
+                                    
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="fas fa-user-plus me-2"></i>Create Admin Account
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                        
+                        <!-- Existing Admins List -->
+                        <h6 class="mb-3"><i class="fas fa-list me-2"></i>Current Administrators</h6>
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Employee #</th>
+                                        <th>Name</th>
+                                        <th>Email</th>
+                                        <th>Department</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (empty($adminUsers)): ?>
+                                    <tr>
+                                        <td colspan="6" class="text-center text-muted">No administrators found</td>
+                                    </tr>
+                                    <?php else: ?>
+                                        <?php foreach ($adminUsers as $user): ?>
+                                        <tr>
+                                            <td>
+                                                <span class="badge bg-danger"><?php echo htmlspecialchars($user['employee_number']); ?></span>
+                                            </td>
+                                            <td>
+                                                <div class="d-flex align-items-center">
+                                                    <i class="fas fa-shield-alt text-danger me-2"></i>
+                                                    <?php 
+                                                    $fullName = trim(($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? ''));
+                                                    echo htmlspecialchars($fullName ?: 'N/A');
+                                                    ?>
+                                                </div>
+                                            </td>
+                                            <td><?php echo htmlspecialchars($user['email']); ?></td>
+                                            <td><?php echo htmlspecialchars($user['department'] ?? 'N/A'); ?></td>
+                                            <td>
+                                                <?php if ($user['status'] === 'active'): ?>
+                                                    <span class="badge bg-success">Active</span>
+                                                <?php else: ?>
+                                                    <span class="badge bg-secondary"><?php echo ucfirst($user['status']); ?></span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <?php if ($user['id'] === $_SESSION['user_id']): ?>
+                                                    <span class="badge bg-info"><i class="fas fa-user me-1"></i>You</span>
+                                                <?php else: ?>
+                                                    <form method="POST" class="d-inline" onsubmit="return confirm('Are you sure you want to demote this admin to employee? They will lose all admin privileges.');">
+                                                        <input type="hidden" name="action" value="demote_to_employee">
+                                                        <input type="hidden" name="user_id" value="<?php echo $user['id']; ?>">
+                                                        <button type="submit" class="btn btn-sm btn-warning" title="Demote to Employee" <?php echo ($adminCount <= 1) ? 'disabled' : ''; ?>>
+                                                            <i class="fas fa-arrow-down"></i> Demote
+                                                        </button>
+                                                    </form>
+                                                <?php endif; ?>
+                                            </td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <div class="alert alert-warning mt-3">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            <strong>Important:</strong> At least one admin must remain in the system. You cannot demote yourself or the last admin.
                         </div>
                     </div>
                     
