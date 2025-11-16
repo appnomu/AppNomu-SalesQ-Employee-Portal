@@ -129,7 +129,7 @@ $typeCounts = $typeStmt->fetchAll(PDO::FETCH_ASSOC);
                     </div>
                     
                     <nav class="nav flex-column">
-                        <a class="nav-link" href="dashboard">
+                        <a class="nav-link" href="dashboard.php">
                             <i class="fas fa-tachometer-alt me-2"></i>Dashboard
                         </a>
                         <a class="nav-link" href="employees.php">
