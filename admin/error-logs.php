@@ -2,18 +2,21 @@
 require_once '../config/session-security.php';
 require_once '../config/database.php';
 require_once '../includes/functions.php';
-require_once '../includes/error-logger.php';
+require_once '../config/config.php';
 
 // Start secure session first
 startSecureSession();
 requireAdmin();
 
-$logger = new ErrorLogger($db);
-
 // Handle log cleanup
 if (isset($_POST['clear_old_logs'])) {
-    $logger->clearOldLogs();
-    $success = 'Old logs cleared successfully';
+    try {
+        $stmt = $db->prepare("DELETE FROM error_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY)");
+        $stmt->execute();
+        $success = 'Old logs cleared successfully';
+    } catch (Exception $e) {
+        $error = 'Failed to clear logs: ' . $e->getMessage();
+    }
 }
 
 // Get filter parameters
@@ -22,45 +25,58 @@ $page = max(1, intval($_GET['page'] ?? 1));
 $logsPerPage = 50;
 $offset = ($page - 1) * $logsPerPage;
 
-// Get error logs
-$sql = "SELECT * FROM error_logs";
-$params = [];
+// Initialize variables
+$logs = [];
+$totalLogs = 0;
+$totalPages = 0;
+$typeCounts = [];
 
-if ($filterType) {
-    $sql .= " WHERE type = ?";
-    $params[] = $filterType;
+try {
+    // Get error logs
+    $sql = "SELECT * FROM error_logs";
+    $params = [];
+    
+    if ($filterType) {
+        $sql .= " WHERE type = ?";
+        $params[] = $filterType;
+    }
+    
+    $sql .= " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+    $params[] = $logsPerPage;
+    $params[] = $offset;
+    
+    $stmt = $db->prepare($sql);
+    $stmt->execute($params);
+    $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Get total count
+    $countSql = "SELECT COUNT(*) as total FROM error_logs";
+    if ($filterType) {
+        $countSql .= " WHERE type = ?";
+        $countStmt = $db->prepare($countSql);
+        $countStmt->execute([$filterType]);
+    } else {
+        $countStmt = $db->prepare($countSql);
+        $countStmt->execute();
+    }
+    $totalLogs = $countStmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $totalPages = ceil($totalLogs / $logsPerPage);
+    
+    // Get error type counts
+    $typeStmt = $db->prepare("
+        SELECT type, COUNT(*) as count 
+        FROM error_logs 
+        GROUP BY type 
+        ORDER BY count DESC
+    ");
+    $typeStmt->execute();
+    $typeCounts = $typeStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    // If table doesn't exist or query fails, show error
+    $error = 'Error loading logs: ' . $e->getMessage();
+    $logs = [];
+    $typeCounts = [];
 }
-
-$sql .= " ORDER BY created_at DESC LIMIT ? OFFSET ?";
-$params[] = $logsPerPage;
-$params[] = $offset;
-
-$stmt = $db->prepare($sql);
-$stmt->execute($params);
-$logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Get total count
-$countSql = "SELECT COUNT(*) as total FROM error_logs";
-if ($filterType) {
-    $countSql .= " WHERE type = ?";
-    $countStmt = $db->prepare($countSql);
-    $countStmt->execute([$filterType]);
-} else {
-    $countStmt = $db->prepare($countSql);
-    $countStmt->execute();
-}
-$totalLogs = $countStmt->fetch(PDO::FETCH_ASSOC)['total'];
-$totalPages = ceil($totalLogs / $logsPerPage);
-
-// Get error type counts
-$typeStmt = $db->prepare("
-    SELECT type, COUNT(*) as count 
-    FROM error_logs 
-    GROUP BY type 
-    ORDER BY count DESC
-");
-$typeStmt->execute();
-$typeCounts = $typeStmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -198,6 +214,13 @@ $typeCounts = $typeStmt->fetchAll(PDO::FETCH_ASSOC);
                     <?php if (isset($success)): ?>
                         <div class="alert alert-success alert-dismissible fade show">
                             <?php echo $success; ?>
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <?php if (isset($error)): ?>
+                        <div class="alert alert-danger alert-dismissible fade show">
+                            <?php echo htmlspecialchars($error); ?>
                             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                         </div>
                     <?php endif; ?>
