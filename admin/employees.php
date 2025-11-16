@@ -392,6 +392,9 @@ $departments = $stmt->fetchAll(PDO::FETCH_COLUMN);
                         <a class="nav-link" href="reports.php">
                             <i class="fas fa-chart-bar me-2"></i>Reports
                         </a>
+                        <a class="nav-link" href="error-logs.php">
+                            <i class="fas fa-exclamation-triangle me-2"></i>Error Logs
+                        </a>
                         <a class="nav-link" href="settings.php">
                             <i class="fas fa-cog me-2"></i>Settings
                         </a>
