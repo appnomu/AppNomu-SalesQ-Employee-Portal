@@ -3,6 +3,7 @@ require_once __DIR__ . '/../config/session-security.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/../includes/error-logger.php';
 
 // Start secure session first
 startSecureSession();
@@ -20,52 +21,105 @@ $error = '';
 
 // Handle document upload
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_document'])) {
+    $logger = new ErrorLogger($db);
     $documentName = sanitizeInput($_POST['document_name']);
     $documentType = sanitizeInput($_POST['document_type']);
     
-    if (isset($_FILES['document_file']) && $_FILES['document_file']['error'] === UPLOAD_ERR_OK) {
-        $uploadDir = '../uploads/';
-        $fileName = 'doc_' . $userId . '_' . time() . '_' . $_FILES['document_file']['name'];
-        $uploadPath = $uploadDir . $fileName;
+    // Check if file was uploaded
+    if (!isset($_FILES['document_file'])) {
+        $error = 'No file was uploaded. Please select a file.';
+        $logger->logUploadError('No file in $_FILES', $userId, 'none', 'NO_FILE');
+    } elseif ($_FILES['document_file']['error'] !== UPLOAD_ERR_OK) {
+        // Handle upload errors
+        $uploadErrors = [
+            UPLOAD_ERR_INI_SIZE => 'File exceeds upload_max_filesize in php.ini (' . ini_get('upload_max_filesize') . ')',
+            UPLOAD_ERR_FORM_SIZE => 'File exceeds MAX_FILE_SIZE in HTML form',
+            UPLOAD_ERR_PARTIAL => 'File was only partially uploaded',
+            UPLOAD_ERR_NO_FILE => 'No file was uploaded',
+            UPLOAD_ERR_NO_TMP_DIR => 'Missing temporary folder on server',
+            UPLOAD_ERR_CANT_WRITE => 'Failed to write file to disk',
+            UPLOAD_ERR_EXTENSION => 'A PHP extension stopped the file upload'
+        ];
         
-        // Validate file type
-        $allowedTypes = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
-        $fileExtension = strtolower(pathinfo($_FILES['document_file']['name'], PATHINFO_EXTENSION));
-        
-        if (in_array($fileExtension, $allowedTypes) && $_FILES['document_file']['size'] <= 10000000) {
-            if (move_uploaded_file($_FILES['document_file']['tmp_name'], $uploadPath)) {
-                // Set proper file permissions for web access
-                chmod($uploadPath, 0644);
-                try {
-                    // Save document info to database
-                    $stmt = $db->prepare("
-                        INSERT INTO file_uploads (user_id, file_name, original_name, file_path, file_type, file_size, category) 
-                        VALUES (?, ?, ?, ?, ?, ?, 'document')
-                    ");
-                    $stmt->execute([
-                        $userId, 
-                        $fileName, 
-                        $documentName ?: $_FILES['document_file']['name'], 
-                        $uploadPath, 
-                        $fileExtension, 
-                        $_FILES['document_file']['size']
-                    ]);
-                    
-                    // Log activity
-                    logActivity($userId, 'document_upload', 'file_uploads', $db->lastInsertId());
-                    
-                    $success = 'Document uploaded successfully!';
-                } catch (Exception $e) {
-                    $error = 'Failed to save document info: ' . $e->getMessage();
-                }
-            } else {
-                $error = 'Failed to upload document';
-            }
-        } else {
-            $error = 'Invalid file type or size too large (max 10MB)';
-        }
+        $errorCode = $_FILES['document_file']['error'];
+        $error = $uploadErrors[$errorCode] ?? 'Unknown upload error (code: ' . $errorCode . ')';
+        $logger->logUploadError($error, $userId, $_FILES['document_file']['name'] ?? 'unknown', $errorCode);
     } else {
-        $error = 'Please select a file to upload';
+        // File uploaded successfully, now process it
+        $uploadDir = __DIR__ . '/../uploads/';
+        
+        // Ensure upload directory exists and is writable
+        if (!is_dir($uploadDir)) {
+            if (!mkdir($uploadDir, 0755, true)) {
+                $error = 'Upload directory does not exist and could not be created';
+                $logger->logUploadError($error, $userId, $_FILES['document_file']['name'], 'DIR_CREATE_FAILED');
+            }
+        }
+        
+        if (!is_writable($uploadDir)) {
+            $error = 'Upload directory is not writable. Please contact administrator.';
+            $logger->logUploadError($error, $userId, $_FILES['document_file']['name'], 'DIR_NOT_WRITABLE');
+        }
+        
+        if (empty($error)) {
+            // Sanitize filename
+            $originalName = basename($_FILES['document_file']['name']);
+            $fileName = 'doc_' . $userId . '_' . time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $originalName);
+            $uploadPath = $uploadDir . $fileName;
+            
+            // Validate file type
+            $allowedTypes = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
+            $fileExtension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+            
+            if (!in_array($fileExtension, $allowedTypes)) {
+                $error = 'Invalid file type. Allowed types: PDF, DOC, DOCX, JPG, PNG';
+                $logger->logUploadError($error, $userId, $originalName, 'INVALID_TYPE');
+            } elseif ($_FILES['document_file']['size'] > 10000000) {
+                $error = 'File size too large (max 10MB). Your file: ' . round($_FILES['document_file']['size'] / 1024 / 1024, 2) . 'MB';
+                $logger->logUploadError($error, $userId, $originalName, 'FILE_TOO_LARGE');
+            } elseif ($_FILES['document_file']['size'] == 0) {
+                $error = 'File is empty (0 bytes)';
+                $logger->logUploadError($error, $userId, $originalName, 'EMPTY_FILE');
+            } else {
+                // Attempt to move uploaded file
+                if (move_uploaded_file($_FILES['document_file']['tmp_name'], $uploadPath)) {
+                    // Set proper file permissions
+                    chmod($uploadPath, 0644);
+                    
+                    try {
+                        // Save document info to database
+                        $stmt = $db->prepare("
+                            INSERT INTO file_uploads (user_id, file_name, original_name, file_path, file_type, file_size, category) 
+                            VALUES (?, ?, ?, ?, ?, ?, 'document')
+                        ");
+                        $stmt->execute([
+                            $userId, 
+                            $fileName, 
+                            $documentName ?: $originalName, 
+                            $uploadPath, 
+                            $fileExtension, 
+                            $_FILES['document_file']['size']
+                        ]);
+                        
+                        // Log activity
+                        logActivity($userId, 'document_upload', 'file_uploads', $db->lastInsertId());
+                        
+                        $success = 'Document uploaded successfully!';
+                    } catch (Exception $e) {
+                        $error = 'Failed to save document info: ' . $e->getMessage();
+                        $logger->logDatabaseError($error, 'INSERT file_uploads', $userId);
+                        
+                        // Clean up uploaded file if database insert failed
+                        if (file_exists($uploadPath)) {
+                            unlink($uploadPath);
+                        }
+                    }
+                } else {
+                    $error = 'Failed to move uploaded file. Check server permissions.';
+                    $logger->logUploadError($error, $userId, $originalName, 'MOVE_FAILED');
+                }
+            }
+        }
     }
 }
 

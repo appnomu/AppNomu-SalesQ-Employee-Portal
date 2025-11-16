@@ -9,16 +9,25 @@ require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/infobip.php';
 require_once __DIR__ . '/../includes/whatsapp.php';
+require_once __DIR__ . '/../includes/error-logger.php';
 
 class ReminderProcessor {
     private $db;
     private $infobip;
+    private $logger;
     
     public function __construct($database) {
         $this->db = $database;
+        $this->logger = new ErrorLogger($database);
         // Set timezone to match your server/application timezone
         date_default_timezone_set('Africa/Kampala'); // UTC+3 for Uganda
-        $this->infobip = new InfobipAPI();
+        
+        try {
+            $this->infobip = new InfobipAPI();
+        } catch (Exception $e) {
+            $this->logger->logError('REMINDER_INIT', 'Failed to initialize Infobip API: ' . $e->getMessage(), __FILE__, __LINE__);
+            throw $e;
+        }
     }
     
     /**
@@ -27,34 +36,51 @@ class ReminderProcessor {
     public function processPendingReminders() {
         $processed = 0;
         
-        // Use database lock to prevent duplicate processing
-        $stmt = $this->db->prepare("
-            SELECT r.*, u.phone, u.email, ep.first_name, ep.last_name
-            FROM reminders r
-            JOIN users u ON r.user_id = u.id
-            LEFT JOIN employee_profiles ep ON u.id = ep.user_id
-            WHERE r.status = 'pending' 
-            AND r.reminder_datetime <= NOW()
-            ORDER BY r.reminder_datetime ASC
-            FOR UPDATE
-        ");
-        $stmt->execute();
-        $reminders = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        foreach ($reminders as $reminder) {
-            // Mark as processing immediately to prevent duplicates
+        try {
+            // Use database lock to prevent duplicate processing
             $stmt = $this->db->prepare("
-                UPDATE reminders 
-                SET status = 'processing' 
-                WHERE id = ? AND status = 'pending'
+                SELECT r.*, u.phone, u.email, ep.first_name, ep.last_name
+                FROM reminders r
+                JOIN users u ON r.user_id = u.id
+                LEFT JOIN employee_profiles ep ON u.id = ep.user_id
+                WHERE r.status = 'pending' 
+                AND r.reminder_datetime <= NOW()
+                ORDER BY r.reminder_datetime ASC
+                FOR UPDATE
             ");
-            $stmt->execute([$reminder['id']]);
+            $stmt->execute();
+            $reminders = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
-            // Only process if we successfully marked it as processing
-            if ($stmt->rowCount() > 0) {
-                $this->processReminder($reminder);
-                $processed++;
+            $this->logger->logError('REMINDER_INFO', 'Found ' . count($reminders) . ' pending reminders to process', __FILE__, __LINE__, null, [
+                'count' => count($reminders),
+                'current_time' => date('Y-m-d H:i:s')
+            ]);
+            
+            foreach ($reminders as $reminder) {
+                try {
+                    // Mark as processing immediately to prevent duplicates
+                    $stmt = $this->db->prepare("
+                        UPDATE reminders 
+                        SET status = 'processing' 
+                        WHERE id = ? AND status = 'pending'
+                    ");
+                    $stmt->execute([$reminder['id']]);
+                    
+                    // Only process if we successfully marked it as processing
+                    if ($stmt->rowCount() > 0) {
+                        $this->processReminder($reminder);
+                        $processed++;
+                    }
+                } catch (Exception $e) {
+                    $this->logger->logError('REMINDER_PROCESS', 'Failed to process reminder ID ' . $reminder['id'] . ': ' . $e->getMessage(), __FILE__, __LINE__, $reminder['user_id'], [
+                        'reminder_id' => $reminder['id'],
+                        'error' => $e->getMessage()
+                    ]);
+                }
             }
+        } catch (Exception $e) {
+            $this->logger->logError('REMINDER_FETCH', 'Failed to fetch pending reminders: ' . $e->getMessage(), __FILE__, __LINE__);
+            throw $e;
         }
         
         return $processed;
@@ -72,6 +98,12 @@ class ReminderProcessor {
         $success = false;
         $errorMessage = '';
         
+        $this->logger->logError('REMINDER_START', 'Processing reminder ID ' . $reminder['id'], __FILE__, __LINE__, $reminder['user_id'], [
+            'reminder_id' => $reminder['id'],
+            'delivery_method' => $reminder['delivery_method'],
+            'title' => $reminder['title']
+        ]);
+        
         try {
             switch ($reminder['delivery_method']) {
                 case 'sms':
@@ -87,26 +119,32 @@ class ReminderProcessor {
                     break;
                     
                 default:
-                    $errorMessage = 'Invalid delivery method';
+                    $errorMessage = 'Invalid delivery method: ' . $reminder['delivery_method'];
+                    $this->logger->logError('REMINDER_INVALID_METHOD', $errorMessage, __FILE__, __LINE__, $reminder['user_id']);
                     break;
             }
             
-            // Update reminder status with additional check to prevent duplicates
+            // Update reminder status
             if ($success) {
                 $stmt = $this->db->prepare("
                     UPDATE reminders 
                     SET status = 'sent', sent_at = NOW() 
-                    WHERE id = ? AND status = 'pending'
+                    WHERE id = ?
                 ");
-                $updated = $stmt->execute([$reminder['id']]);
+                $stmt->execute([$reminder['id']]);
                 
-                if ($stmt->rowCount() === 0) {
-                    // Reminder was already processed by another instance
-                    return;
-                }
+                $this->logger->logError('REMINDER_SUCCESS', 'Reminder sent successfully', __FILE__, __LINE__, $reminder['user_id'], [
+                    'reminder_id' => $reminder['id'],
+                    'delivery_method' => $reminder['delivery_method']
+                ]);
             } else {
                 $stmt = $this->db->prepare("UPDATE reminders SET status = 'failed' WHERE id = ?");
                 $stmt->execute([$reminder['id']]);
+                
+                $this->logger->logError('REMINDER_FAILED', 'Reminder delivery failed: ' . $errorMessage, __FILE__, __LINE__, $reminder['user_id'], [
+                    'reminder_id' => $reminder['id'],
+                    'error' => $errorMessage
+                ]);
             }
             
             // Log the activity
@@ -114,6 +152,11 @@ class ReminderProcessor {
             
         } catch (Exception $e) {
             $errorMessage = $e->getMessage();
+            
+            $this->logger->logError('REMINDER_EXCEPTION', 'Exception processing reminder: ' . $errorMessage, __FILE__, __LINE__, $reminder['user_id'], [
+                'reminder_id' => $reminder['id'],
+                'exception' => $e->getTraceAsString()
+            ]);
             
             // Mark as failed
             $stmt = $this->db->prepare("
@@ -131,28 +174,44 @@ class ReminderProcessor {
      * Send SMS reminder
      */
     private function sendSMSReminder($reminder, $employeeName) {
-        $message = "Hi {$employeeName}, Reminder: {$reminder['title']} - " . 
-                  date('M j, Y g:i A', strtotime($reminder['reminder_datetime'])) . 
-                  ". AppNomu EP Portal";
-        
-        $result = $this->infobip->sendSMS($reminder['phone'], $message, SMS_SENDER_ID);
-        return $result !== false;
+        try {
+            $message = "Hi {$employeeName}, Reminder: {$reminder['title']} - " . 
+                      date('M j, Y g:i A', strtotime($reminder['reminder_datetime'])) . 
+                      ". AppNomu EP Portal";
+            
+            $this->logger->logError('REMINDER_SMS_ATTEMPT', 'Attempting to send SMS', __FILE__, __LINE__, $reminder['user_id'], [
+                'phone' => $reminder['phone'],
+                'message_length' => strlen($message)
+            ]);
+            
+            $result = $this->infobip->sendSMS($reminder['phone'], $message, SMS_SENDER_ID);
+            return $result !== false;
+        } catch (Exception $e) {
+            $this->logger->logError('REMINDER_SMS_ERROR', 'SMS send failed: ' . $e->getMessage(), __FILE__, __LINE__, $reminder['user_id']);
+            return false;
+        }
     }
     
     /**
      * Send WhatsApp reminder using approved template
      */
     private function sendWhatsAppReminder($reminder, $employeeName) {
-        // Format time for WhatsApp template
-        $reminderTime = date('M j, Y g:i A', strtotime($reminder['reminder_datetime']));
-        
-        // Use the reminder template (you'll need to provide the template name)
-        $templateName = 'reminder_notification'; // Replace with your approved template name
-        
-        require_once __DIR__ . '/whatsapp.php';
-        $whatsapp = new InfobipWhatsApp();
-        $result = $whatsapp->sendReminder($reminder['phone'], $employeeName, $reminder['title'], $reminderTime);
-        return $result !== false;
+        try {
+            // Format time for WhatsApp template
+            $reminderTime = date('M j, Y g:i A', strtotime($reminder['reminder_datetime']));
+            
+            $this->logger->logError('REMINDER_WHATSAPP_ATTEMPT', 'Attempting to send WhatsApp', __FILE__, __LINE__, $reminder['user_id'], [
+                'phone' => $reminder['phone']
+            ]);
+            
+            require_once __DIR__ . '/whatsapp.php';
+            $whatsapp = new InfobipWhatsApp();
+            $result = $whatsapp->sendReminder($reminder['phone'], $employeeName, $reminder['title'], $reminderTime);
+            return $result !== false;
+        } catch (Exception $e) {
+            $this->logger->logError('REMINDER_WHATSAPP_ERROR', 'WhatsApp send failed: ' . $e->getMessage(), __FILE__, __LINE__, $reminder['user_id']);
+            return false;
+        }
     }
     
     /**
@@ -170,15 +229,26 @@ class ReminderProcessor {
      * Create system notification for in-app display
      */
     private function createSystemNotification($reminder, $employeeName) {
-        $stmt = $this->db->prepare("
-            INSERT INTO system_notifications (user_id, title, message, type) 
-            VALUES (?, ?, ?, 'reminder')
-        ");
-        
-        $message = $reminder['description'] ? $reminder['description'] : 
-                  "Scheduled for " . date('M j, Y g:i A', strtotime($reminder['reminder_datetime']));
-        
-        return $stmt->execute([$reminder['user_id'], $reminder['title'], $message]);
+        try {
+            $stmt = $this->db->prepare("
+                INSERT INTO system_notifications (user_id, title, message, type) 
+                VALUES (?, ?, ?, 'reminder')
+            ");
+            
+            $message = $reminder['description'] ? $reminder['description'] : 
+                      "Scheduled for " . date('M j, Y g:i A', strtotime($reminder['reminder_datetime']));
+            
+            $result = $stmt->execute([$reminder['user_id'], $reminder['title'], $message]);
+            
+            if ($result) {
+                $this->logger->logError('REMINDER_SYSTEM_SUCCESS', 'System notification created', __FILE__, __LINE__, $reminder['user_id']);
+            }
+            
+            return $result;
+        } catch (Exception $e) {
+            $this->logger->logError('REMINDER_SYSTEM_ERROR', 'System notification failed: ' . $e->getMessage(), __FILE__, __LINE__, $reminder['user_id']);
+            return false;
+        }
     }
     
     /**
