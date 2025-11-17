@@ -26,15 +26,24 @@ $stmt = $db->prepare("SELECT u.*, ep.* FROM users u LEFT JOIN employee_profiles 
 $stmt->execute([$userId]);
 $employee = $stmt->fetch(PDO::FETCH_ASSOC);
 
+// Check if withdrawals are frozen
+$withdrawalsFrozen = $employee['withdrawal_frozen'] ?? 0;
+$freezeReason = $employee['freeze_reason'] ?? '';
+
 // Handle withdrawal request
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'request_withdrawal') {
-    $withdrawalAmount = (float)$_POST['test_amount'];
-    $paymentMethod = $_POST['payment_method'];
-    
-    if ($withdrawalAmount <= 0) {
-        $message = 'Please enter a valid withdrawal amount';
+    // Check if withdrawals are frozen
+    if ($withdrawalsFrozen) {
+        $message = 'Your withdrawal access has been frozen. Reason: ' . htmlspecialchars($freezeReason) . '. Please contact the administrator.';
         $messageType = 'danger';
     } else {
+        $withdrawalAmount = (float)$_POST['test_amount'];
+        $paymentMethod = $_POST['payment_method'];
+        
+        if ($withdrawalAmount <= 0) {
+            $message = 'Please enter a valid withdrawal amount';
+            $messageType = 'danger';
+        } else {
         // Validate minimum withdrawal amounts
         $validationErrors = validateMinimumWithdrawal($withdrawalAmount, $paymentMethod);
         if (!empty($validationErrors)) {
@@ -136,6 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $db->rollBack();
             $message = 'Error creating withdrawal: ' . $e->getMessage();
             $messageType = 'danger';
+        }
         }
         }
     }
@@ -319,6 +329,34 @@ $employee = $stmt->fetch(PDO::FETCH_ASSOC);
                 <div class="p-4">
                     <h2><i class="fas fa-money-bill-wave me-2 text-success"></i>Salary Withdrawal</h2>
                     
+                    <?php if ($withdrawalsFrozen): ?>
+                        <div class="card mb-4" style="background-color: #2d3748; border: 1px solid #4a5568; border-radius: 8px;">
+                            <div class="card-body p-3">
+                                <div class="d-flex align-items-start">
+                                    <div class="flex-shrink-0 me-3">
+                                        <i class="fas fa-lock" style="font-size: 20px; color: #fbbf24;"></i>
+                                    </div>
+                                    <div class="flex-grow-1">
+                                        <h6 class="mb-2" style="color: #fbbf24; font-weight: 600; font-size: 0.95rem;">
+                                            Withdrawal Access Frozen
+                                        </h6>
+                                        <p class="mb-2" style="color: #e2e8f0; font-size: 0.875rem; line-height: 1.5;">
+                                            Your withdrawal access has been temporarily suspended.
+                                        </p>
+                                        <div class="mb-2" style="padding: 8px 12px; background-color: rgba(251, 191, 36, 0.1); border-radius: 6px; border-left: 2px solid #fbbf24;">
+                                            <small style="color: #cbd5e0; font-weight: 600;">REASON</small>
+                                            <p class="mb-0" style="color: #e2e8f0; font-size: 0.875rem; margin-top: 4px;">
+                                                <?php echo htmlspecialchars($freezeReason); ?>
+                                            </p>
+                                        </div>
+                                        <small style="color: #a0aec0; font-size: 0.8rem;">
+                                            <i class="fas fa-info-circle me-1"></i>Contact your Supervisor for support
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endif; ?>
                     
                     <?php if ($message): ?>
                         <div class="alert alert-<?php echo $messageType; ?> alert-dismissible fade show border-0 shadow-sm" style="border-radius: 12px;">
@@ -480,8 +518,8 @@ $employee = $stmt->fetch(PDO::FETCH_ASSOC);
                                             </div>
                                         </div>
                                         
-                                        <button type="submit" class="btn btn-success btn-lg w-100 shadow">
-                                            <i class="fas fa-paper-plane me-2"></i>Request Withdrawal
+                                        <button type="submit" class="btn btn-success btn-lg w-100 shadow" <?php echo $withdrawalsFrozen ? 'disabled' : ''; ?>>
+                                            <i class="fas <?php echo $withdrawalsFrozen ? 'fa-lock' : 'fa-paper-plane'; ?> me-2"></i><?php echo $withdrawalsFrozen ? 'Withdrawals Frozen' : 'Request Withdrawal'; ?>
                                         </button>
                                     </form>
                                 </div>

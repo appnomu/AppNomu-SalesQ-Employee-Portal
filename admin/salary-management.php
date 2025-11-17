@@ -189,13 +189,374 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         header('Location: salary-management.php');
         exit();
     }
+    
+    // Handle freeze withdrawal
+    if ($_POST['action'] === 'freeze_withdrawal') {
+        $employeeId = (int)$_POST['employee_id'];
+        $reason = $_POST['freeze_reason'] ?? 'No reason provided';
+        
+        try {
+            // Get employee details
+            $stmt = $db->prepare("
+                SELECT u.phone, u.email, ep.first_name, ep.last_name 
+                FROM users u 
+                JOIN employee_profiles ep ON u.id = ep.user_id 
+                WHERE u.id = ?
+            ");
+            $stmt->execute([$employeeId]);
+            $employee = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            // Freeze withdrawals
+            $stmt = $db->prepare("
+                UPDATE employee_profiles 
+                SET withdrawal_frozen = 1,
+                    freeze_reason = ?,
+                    frozen_at = NOW(),
+                    frozen_by = ?
+                WHERE user_id = ?
+            ");
+            $stmt->execute([$reason, $_SESSION['user_id'], $employeeId]);
+            
+            // Send notifications
+            try {
+                require_once '../includes/infobip.php';
+                $infobip = new InfobipAPI();
+                
+                $employeeName = $employee['first_name'] . ' ' . $employee['last_name'];
+                
+                // SMS Notification
+                $smsMessage = "IMPORTANT {$employee['first_name']}: Your withdrawal access has been frozen. Reason: {$reason}. Contact your Supervisor for support. - AppNomu EP Portal";
+                $infobip->sendSMS($employee['phone'], $smsMessage, 'AppNomu');
+                
+                // Email Notification - Professional Gmail-compatible template
+                $emailSubject = "⚠️ Withdrawal Access Suspended - Action Required";
+                $emailBody = '
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; background-color: #f5f5f5;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
+        <tr>
+            <td style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">
+                                🔒 Withdrawal Access Suspended
+                            </h1>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td style="padding: 40px 30px;">
+                            <p style="margin: 0 0 20px; font-size: 16px; line-height: 1.6; color: #333333;">
+                                Dear <strong>' . htmlspecialchars($employee['first_name']) . '</strong>,
+                            </p>
+                            
+                            <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                <p style="margin: 0; font-size: 15px; color: #856404; line-height: 1.6;">
+                                    <strong>⚠️ Important Notice:</strong> Your withdrawal access has been temporarily suspended.
+                                </p>
+                            </div>
+                            
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 25px 0;">
+                                <tr>
+                                    <td style="padding: 20px; background-color: #f8f9fa; border-radius: 6px; border: 1px solid #dee2e6;">
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                            <tr>
+                                                <td style="padding: 8px 0; font-size: 14px; color: #6c757d;">
+                                                    <strong style="color: #495057;">Reason:</strong>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; font-size: 15px; color: #212529; line-height: 1.6;">
+                                                    ' . nl2br(htmlspecialchars($reason)) . '
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; padding-top: 15px; font-size: 14px; color: #6c757d;">
+                                                    <strong style="color: #495057;">Date & Time:</strong>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; font-size: 15px; color: #212529;">
+                                                    ' . date('l, F j, Y \a\t g:i A') . '
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <div style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                <p style="margin: 0; font-size: 14px; color: #721c24; line-height: 1.6;">
+                                    <strong>What this means:</strong><br>
+                                    • You cannot request new withdrawals<br>
+                                    • Pending withdrawals will continue processing<br>
+                                    • Your salary balance remains secure
+                                </p>
+                            </div>
+                            
+                            <p style="margin: 25px 0 20px; font-size: 15px; line-height: 1.6; color: #333333;">
+                                If you have questions or need clarification, please contact your administrator immediately.
+                            </p>
+                            
+                            <!-- CTA Button -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 30px 0;">
+                                <tr>
+                                    <td style="text-align: center;">
+                                        <a href="https://emp.appnomu.com/employee/withdrawal-salary" 
+                                           style="display: inline-block; padding: 14px 30px; background-color: #6c757d; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600;">
+                                            View Account Status
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding: 30px; background-color: #f8f9fa; border-radius: 0 0 8px 8px; border-top: 1px solid #dee2e6;">
+                            <p style="margin: 0 0 10px; font-size: 14px; color: #6c757d; text-align: center;">
+                                Best regards,<br>
+                                <strong style="color: #495057;">AppNomu SalesQ Team</strong>
+                            </p>
+                            <p style="margin: 15px 0 0; font-size: 12px; color: #adb5bd; text-align: center; line-height: 1.5;">
+                                This is an automated notification from AppNomu Employee Portal.<br>
+                                Please do not reply to this email.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+                
+                <!-- Mobile-friendly spacing -->
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 600px; margin: 20px auto 0;">
+                    <tr>
+                        <td style="text-align: center; padding: 0 20px;">
+                            <p style="margin: 0; font-size: 12px; color: #adb5bd; line-height: 1.5;">
+                                © ' . date('Y') . ' AppNomu SalesQ. All rights reserved.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>';
+                $infobip->sendEmail($employee['email'], $emailSubject, $emailBody);
+                
+            } catch (Exception $e) {
+                error_log("Freeze notification error: " . $e->getMessage());
+            }
+            
+            $_SESSION['success_message'] = "Withdrawal access frozen for {$employeeName}. Notifications sent via SMS and Email.";
+            
+        } catch (Exception $e) {
+            $_SESSION['error_message'] = "Error freezing withdrawal: " . $e->getMessage();
+        }
+        
+        header('Location: salary-management.php');
+        exit();
+    }
+    
+    // Handle unfreeze withdrawal
+    if ($_POST['action'] === 'unfreeze_withdrawal') {
+        $employeeId = (int)$_POST['employee_id'];
+        
+        try {
+            // Get employee details
+            $stmt = $db->prepare("
+                SELECT u.phone, u.email, ep.first_name, ep.last_name 
+                FROM users u 
+                JOIN employee_profiles ep ON u.id = ep.user_id 
+                WHERE u.id = ?
+            ");
+            $stmt->execute([$employeeId]);
+            $employee = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            // Unfreeze withdrawals
+            $stmt = $db->prepare("
+                UPDATE employee_profiles 
+                SET withdrawal_frozen = 0,
+                    unfrozen_at = NOW(),
+                    unfrozen_by = ?
+                WHERE user_id = ?
+            ");
+            $stmt->execute([$_SESSION['user_id'], $employeeId]);
+            
+            // Send notifications
+            try {
+                require_once '../includes/infobip.php';
+                $infobip = new InfobipAPI();
+                
+                $employeeName = $employee['first_name'] . ' ' . $employee['last_name'];
+                
+                // SMS Notification
+                $smsMessage = "Hello {$employee['first_name']}, good news! Your withdrawal access has been restored. You can now make withdrawals. - AppNomu EP Portal";
+                $infobip->sendSMS($employee['phone'], $smsMessage, 'AppNomu');
+                
+                // Email Notification - Professional Gmail-compatible template
+                $emailSubject = "✅ Withdrawal Access Restored - You're All Set!";
+                $emailBody = '
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; background-color: #f5f5f5;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
+        <tr>
+            <td style="padding: 20px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #28a745 0%, #218838 100%); padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">
+                                ✅ Withdrawal Access Restored
+                            </h1>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td style="padding: 40px 30px;">
+                            <p style="margin: 0 0 20px; font-size: 16px; line-height: 1.6; color: #333333;">
+                                Dear <strong>' . htmlspecialchars($employee['first_name']) . '</strong>,
+                            </p>
+                            
+                            <div style="background-color: #d4edda; border-left: 4px solid #28a745; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                <p style="margin: 0; font-size: 15px; color: #155724; line-height: 1.6;">
+                                    <strong>🎉 Good News!</strong> Your withdrawal access has been successfully restored.
+                                </p>
+                            </div>
+                            
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 25px 0;">
+                                <tr>
+                                    <td style="padding: 20px; background-color: #f8f9fa; border-radius: 6px; border: 1px solid #dee2e6;">
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                            <tr>
+                                                <td style="padding: 8px 0; font-size: 14px; color: #6c757d;">
+                                                    <strong style="color: #495057;">Restored On:</strong>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0; font-size: 15px; color: #212529;">
+                                                    ' . date('l, F j, Y \a\t g:i A') . '
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 15px 0 8px; font-size: 14px; color: #6c757d;">
+                                                    <strong style="color: #495057;">Status:</strong>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding: 8px 0;">
+                                                    <span style="display: inline-block; padding: 6px 12px; background-color: #28a745; color: #ffffff; border-radius: 4px; font-size: 14px; font-weight: 600;">
+                                                        ✓ Active & Ready
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <div style="background-color: #d1ecf1; border-left: 4px solid #17a2b8; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                <p style="margin: 0; font-size: 14px; color: #0c5460; line-height: 1.6;">
+                                    <strong>What you can do now:</strong><br>
+                                    ✓ Request salary withdrawals<br>
+                                    ✓ Choose your preferred payment method<br>
+                                    ✓ Access your full account features
+                                </p>
+                            </div>
+                            
+                            <p style="margin: 25px 0 20px; font-size: 15px; line-height: 1.6; color: #333333;">
+                                You can now proceed with your salary withdrawals as usual. All withdrawal features are fully operational.
+                            </p>
+                            
+                            <!-- CTA Button -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 30px 0;">
+                                <tr>
+                                    <td style="text-align: center;">
+                                        <a href="https://emp.appnomu.com/employee/withdrawal-salary" 
+                                           style="display: inline-block; padding: 14px 30px; background-color: #28a745; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600;">
+                                            Make a Withdrawal
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6;">
+                                <p style="margin: 0; font-size: 14px; color: #6c757d; line-height: 1.6;">
+                                    <strong>Need Help?</strong><br>
+                                    If you have any questions about your account or withdrawals, please don\'t hesitate to contact your administrator.
+                                </p>
+                            </div>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding: 30px; background-color: #f8f9fa; border-radius: 0 0 8px 8px; border-top: 1px solid #dee2e6;">
+                            <p style="margin: 0 0 10px; font-size: 14px; color: #6c757d; text-align: center;">
+                                Best regards,<br>
+                                <strong style="color: #495057;">AppNomu SalesQ Team</strong>
+                            </p>
+                            <p style="margin: 15px 0 0; font-size: 12px; color: #adb5bd; text-align: center; line-height: 1.5;">
+                                This is an automated notification from AppNomu Employee Portal.<br>
+                                Please do not reply to this email.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+                
+                <!-- Mobile-friendly spacing -->
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 600px; margin: 20px auto 0;">
+                    <tr>
+                        <td style="text-align: center; padding: 0 20px;">
+                            <p style="margin: 0; font-size: 12px; color: #adb5bd; line-height: 1.5;">
+                                © ' . date('Y') . ' AppNomu SalesQ. All rights reserved.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>';
+                $infobip->sendEmail($employee['email'], $emailSubject, $emailBody);
+                
+            } catch (Exception $e) {
+                error_log("Unfreeze notification error: " . $e->getMessage());
+            }
+            
+            $_SESSION['success_message'] = "Withdrawal access restored for {$employeeName}. Notifications sent via SMS and Email.";
+            
+        } catch (Exception $e) {
+            $_SESSION['error_message'] = "Error unfreezing withdrawal: " . $e->getMessage();
+        }
+        
+        header('Location: salary-management.php');
+        exit();
+    }
 }
 
 // Get employees with salary info
 $stmt = $db->prepare("
-    SELECT u.id, u.employee_number, ep.first_name, ep.last_name, ep.department, ep.position,
+    SELECT u.id, u.employee_number, u.phone, u.email, ep.first_name, ep.last_name, ep.department, ep.position,
            ep.monthly_salary as salary, ep.withdrawn_amount, ep.period_allocated_amount, ep.current_period,
-           ep.last_salary_reset, ep.salary_status,
+           ep.last_salary_reset, ep.salary_status, ep.withdrawal_frozen, ep.freeze_reason, ep.frozen_at,
            (ep.period_allocated_amount - COALESCE(ep.withdrawn_amount, 0)) as available_balance
     FROM users u
     LEFT JOIN employee_profiles ep ON u.id = ep.user_id
@@ -476,10 +837,34 @@ $recentAllocations = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                                     <small><?php echo $employee['last_salary_reset'] ? date('M j, Y', strtotime($employee['last_salary_reset'])) : 'Never'; ?></small>
                                                 </td>
                                                 <td class="text-center">
-                                                    <button type="button" class="btn btn-sm btn-primary" 
-                                                            onclick="allocateToEmployee(<?php echo $employee['id']; ?>, '<?php echo htmlspecialchars($employee['first_name'] . ' ' . $employee['last_name']); ?>')">
-                                                        <i class="fas fa-plus-circle me-1"></i>Allocate
-                                                    </button>
+                                                    <div class="btn-group" role="group">
+                                                        <button type="button" class="btn btn-sm btn-primary" 
+                                                                onclick="allocateToEmployee(<?php echo $employee['id']; ?>, '<?php echo htmlspecialchars($employee['first_name'] . ' ' . $employee['last_name']); ?>')">
+                                                            <i class="fas fa-plus-circle me-1"></i>Allocate
+                                                        </button>
+                                                        
+                                                        <?php if ($employee['withdrawal_frozen']): ?>
+                                                            <button type="button" class="btn btn-sm btn-success" 
+                                                                    onclick="unfreezeWithdrawal(<?php echo $employee['id']; ?>, '<?php echo htmlspecialchars($employee['first_name'] . ' ' . $employee['last_name']); ?>')"
+                                                                    title="Unfreeze Withdrawals">
+                                                                <i class="fas fa-unlock me-1"></i>Unfreeze
+                                                            </button>
+                                                        <?php else: ?>
+                                                            <button type="button" class="btn btn-sm btn-warning" 
+                                                                    onclick="freezeWithdrawal(<?php echo $employee['id']; ?>, '<?php echo htmlspecialchars($employee['first_name'] . ' ' . $employee['last_name']); ?>')"
+                                                                    title="Freeze Withdrawals">
+                                                                <i class="fas fa-lock me-1"></i>Freeze
+                                                            </button>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                    
+                                                    <?php if ($employee['withdrawal_frozen']): ?>
+                                                        <div class="mt-1">
+                                                            <span class="badge bg-danger" title="<?php echo htmlspecialchars($employee['freeze_reason']); ?>">
+                                                                <i class="fas fa-ban me-1"></i>Frozen
+                                                            </span>
+                                                        </div>
+                                                    <?php endif; ?>
                                                 </td>
                                             </tr>
                                         <?php endforeach; ?>
@@ -716,6 +1101,71 @@ $recentAllocations = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </div>
     </div>
 
+    <!-- Freeze Withdrawal Modal -->
+    <div class="modal fade" id="freezeWithdrawalModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title"><i class="fas fa-lock me-2"></i>Freeze Withdrawal Access</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="POST">
+                    <input type="hidden" name="action" value="freeze_withdrawal">
+                    <input type="hidden" name="employee_id" id="freezeEmployeeId">
+                    <div class="modal-body">
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            <strong>Warning:</strong> This will prevent <span id="freezeEmployeeName" class="fw-bold"></span> from making any withdrawals.
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Reason for Freezing *</label>
+                            <textarea class="form-control" name="freeze_reason" rows="3" required 
+                                      placeholder="Enter reason for freezing withdrawal access..."></textarea>
+                            <small class="text-muted">This reason will be sent to the employee via SMS and Email.</small>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-warning">
+                            <i class="fas fa-lock me-2"></i>Freeze Withdrawal Access
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Unfreeze Withdrawal Modal -->
+    <div class="modal fade" id="unfreezeWithdrawalModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title"><i class="fas fa-unlock me-2"></i>Unfreeze Withdrawal Access</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="POST">
+                    <input type="hidden" name="action" value="unfreeze_withdrawal">
+                    <input type="hidden" name="employee_id" id="unfreezeEmployeeId">
+                    <div class="modal-body">
+                        <div class="alert alert-success">
+                            <i class="fas fa-check-circle me-2"></i>
+                            This will restore withdrawal access for <span id="unfreezeEmployeeName" class="fw-bold"></span>.
+                        </div>
+                        
+                        <p>The employee will be notified via SMS and Email that their withdrawal access has been restored.</p>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-success">
+                            <i class="fas fa-unlock me-2"></i>Restore Withdrawal Access
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         function allocateToEmployee(employeeId, employeeName) {
@@ -725,6 +1175,22 @@ $recentAllocations = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
             const modalInstance = new bootstrap.Modal(modal);
             modalInstance.show();
+        }
+        
+        function freezeWithdrawal(employeeId, employeeName) {
+            document.getElementById('freezeEmployeeId').value = employeeId;
+            document.getElementById('freezeEmployeeName').textContent = employeeName;
+            
+            const modal = new bootstrap.Modal(document.getElementById('freezeWithdrawalModal'));
+            modal.show();
+        }
+        
+        function unfreezeWithdrawal(employeeId, employeeName) {
+            document.getElementById('unfreezeEmployeeId').value = employeeId;
+            document.getElementById('unfreezeEmployeeName').textContent = employeeName;
+            
+            const modal = new bootstrap.Modal(document.getElementById('unfreezeWithdrawalModal'));
+            modal.show();
         }
     </script>
 </body>
