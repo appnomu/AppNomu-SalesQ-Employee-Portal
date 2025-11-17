@@ -57,17 +57,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_document'])) {
         $logger->logUploadError($error, $userId, $_FILES['document_file']['name'] ?? 'unknown', $errorCode);
     } else {
         // File uploaded successfully, now process it
-        $uploadDir = __DIR__ . '/../uploads/';
+        $uploadDirAbsolute = __DIR__ . '/../uploads/';
+        $uploadDirRelative = '../uploads/';
         
         // Ensure upload directory exists and is writable
-        if (!is_dir($uploadDir)) {
-            if (!mkdir($uploadDir, 0755, true)) {
+        if (!is_dir($uploadDirAbsolute)) {
+            if (!mkdir($uploadDirAbsolute, 0755, true)) {
                 $error = 'Upload directory does not exist and could not be created';
                 $logger->logUploadError($error, $userId, $_FILES['document_file']['name'], 'DIR_CREATE_FAILED');
             }
         }
         
-        if (!is_writable($uploadDir)) {
+        if (!is_writable($uploadDirAbsolute)) {
             $error = 'Upload directory is not writable. Please contact administrator.';
             $logger->logUploadError($error, $userId, $_FILES['document_file']['name'], 'DIR_NOT_WRITABLE');
         }
@@ -76,7 +77,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_document'])) {
             // Sanitize filename
             $originalName = basename($_FILES['document_file']['name']);
             $fileName = 'doc_' . $userId . '_' . time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $originalName);
-            $uploadPath = $uploadDir . $fileName;
+            $uploadPathAbsolute = $uploadDirAbsolute . $fileName;
+            $uploadPathRelative = $uploadDirRelative . $fileName;
             
             // Validate file type
             $allowedTypes = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
@@ -92,13 +94,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_document'])) {
                 $error = 'File is empty (0 bytes)';
                 $logger->logUploadError($error, $userId, $originalName, 'EMPTY_FILE');
             } else {
-                // Attempt to move uploaded file
-                if (move_uploaded_file($_FILES['document_file']['tmp_name'], $uploadPath)) {
+                // Attempt to move uploaded file (use absolute path)
+                if (move_uploaded_file($_FILES['document_file']['tmp_name'], $uploadPathAbsolute)) {
                     // Set proper file permissions
-                    chmod($uploadPath, 0644);
+                    chmod($uploadPathAbsolute, 0644);
                     
                     try {
-                        // Save document info to database
+                        // Save document info to database (use relative path for web access)
                         $stmt = $db->prepare("
                             INSERT INTO file_uploads (user_id, file_name, original_name, file_path, file_type, file_size, category) 
                             VALUES (?, ?, ?, ?, ?, ?, 'document')
@@ -107,7 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_document'])) {
                             $userId, 
                             $fileName, 
                             $documentName ?: $originalName, 
-                            $uploadPath, 
+                            $uploadPathRelative,  // Use relative path for database
                             $fileExtension, 
                             $_FILES['document_file']['size']
                         ]);
@@ -116,13 +118,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_document'])) {
                         logActivity($userId, 'document_upload', 'file_uploads', $db->lastInsertId());
                         
                         $success = 'Document uploaded successfully!';
+                        
+                        // Log success for debugging
+                        $logger->logError('UPLOAD_SUCCESS', 'Document uploaded successfully', __FILE__, __LINE__, $userId, [
+                            'file_name' => $fileName,
+                            'file_path_db' => $uploadPathRelative,
+                            'file_size' => $_FILES['document_file']['size']
+                        ]);
                     } catch (Exception $e) {
                         $error = 'Failed to save document info: ' . $e->getMessage();
                         $logger->logDatabaseError($error, 'INSERT file_uploads', $userId);
                         
                         // Clean up uploaded file if database insert failed
-                        if (file_exists($uploadPath)) {
-                            unlink($uploadPath);
+                        if (file_exists($uploadPathAbsolute)) {
+                            unlink($uploadPathAbsolute);
                         }
                     }
                 } else {
@@ -338,12 +347,15 @@ $documents = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <?php if (isset($_FILES['document_file'])): ?>
                             File name: <?= htmlspecialchars($_FILES['document_file']['name'] ?? 'none') ?><br>
                             File size: <?= isset($_FILES['document_file']['size']) ? number_format($_FILES['document_file']['size']) . ' bytes' : 'unknown' ?><br>
-                            Upload error code: <?= $_FILES['document_file']['error'] ?? 'none' ?><br>
+                            Upload error code: <?= $_FILES['document_file']['error'] ?? 'none' ?> (0 = success)<br>
                         <?php endif; ?>
                         Upload dir exists: <?= is_dir(__DIR__ . '/../uploads/') ? 'Yes' : 'No' ?><br>
                         Upload dir writable: <?= is_writable(__DIR__ . '/../uploads/') ? 'Yes' : 'No' ?><br>
                         PHP upload_max_filesize: <?= ini_get('upload_max_filesize') ?><br>
-                        PHP post_max_size: <?= ini_get('post_max_size') ?>
+                        PHP post_max_size: <?= ini_get('post_max_size') ?><br>
+                        <?php if ($success): ?>
+                            <strong class="text-success">✓ Upload successful! Check Error Logs for details.</strong>
+                        <?php endif; ?>
                     </div>
                 <?php endif; ?>
 
