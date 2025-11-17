@@ -3,7 +3,6 @@ require_once __DIR__ . '/../config/session-security.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../includes/functions.php';
-require_once __DIR__ . '/../includes/error-logger.php';
 
 // Start secure session first
 startSecureSession();
@@ -19,127 +18,51 @@ $userId = $_SESSION['user_id'];
 $success = '';
 $error = '';
 
-// Handle document upload
+// Handle document upload - SIMPLIFIED TO MATCH ADMIN
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_document'])) {
-    $logger = new ErrorLogger($db);
     $documentName = sanitizeInput($_POST['document_name']);
-    $documentType = sanitizeInput($_POST['document_type']);
     
-    // Debug: Log that upload was attempted
-    $logger->logError('UPLOAD_ATTEMPT', 'Employee upload attempt started', __FILE__, __LINE__, $userId, [
-        'has_file' => isset($_FILES['document_file']),
-        'post_data' => array_keys($_POST),
-        'files_data' => isset($_FILES['document_file']) ? [
-            'name' => $_FILES['document_file']['name'] ?? 'none',
-            'size' => $_FILES['document_file']['size'] ?? 0,
-            'error' => $_FILES['document_file']['error'] ?? 'none'
-        ] : 'no file'
-    ]);
-    
-    // Check if file was uploaded
-    if (!isset($_FILES['document_file'])) {
-        $error = 'No file was uploaded. Please select a file.';
-        $logger->logUploadError('No file in $_FILES', $userId, 'none', 'NO_FILE');
-    } elseif ($_FILES['document_file']['error'] !== UPLOAD_ERR_OK) {
-        // Handle upload errors
-        $uploadErrors = [
-            UPLOAD_ERR_INI_SIZE => 'File exceeds upload_max_filesize in php.ini (' . ini_get('upload_max_filesize') . ')',
-            UPLOAD_ERR_FORM_SIZE => 'File exceeds MAX_FILE_SIZE in HTML form',
-            UPLOAD_ERR_PARTIAL => 'File was only partially uploaded',
-            UPLOAD_ERR_NO_FILE => 'No file was uploaded',
-            UPLOAD_ERR_NO_TMP_DIR => 'Missing temporary folder on server',
-            UPLOAD_ERR_CANT_WRITE => 'Failed to write file to disk',
-            UPLOAD_ERR_EXTENSION => 'A PHP extension stopped the file upload'
-        ];
+    if (isset($_FILES['document_file']) && $_FILES['document_file']['error'] === UPLOAD_ERR_OK) {
+        $uploadDir = '../uploads/';
+        $fileName = 'doc_' . $userId . '_' . time() . '_' . $_FILES['document_file']['name'];
+        $uploadPath = $uploadDir . $fileName;
         
-        $errorCode = $_FILES['document_file']['error'];
-        $error = $uploadErrors[$errorCode] ?? 'Unknown upload error (code: ' . $errorCode . ')';
-        $logger->logUploadError($error, $userId, $_FILES['document_file']['name'] ?? 'unknown', $errorCode);
-    } else {
-        // File uploaded successfully, now process it
-        $uploadDirAbsolute = __DIR__ . '/../uploads/';
-        $uploadDirRelative = '../uploads/';
+        // Validate file type
+        $allowedTypes = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
+        $fileExtension = strtolower(pathinfo($_FILES['document_file']['name'], PATHINFO_EXTENSION));
         
-        // Ensure upload directory exists and is writable
-        if (!is_dir($uploadDirAbsolute)) {
-            if (!mkdir($uploadDirAbsolute, 0755, true)) {
-                $error = 'Upload directory does not exist and could not be created';
-                $logger->logUploadError($error, $userId, $_FILES['document_file']['name'], 'DIR_CREATE_FAILED');
-            }
-        }
-        
-        if (!is_writable($uploadDirAbsolute)) {
-            $error = 'Upload directory is not writable. Please contact administrator.';
-            $logger->logUploadError($error, $userId, $_FILES['document_file']['name'], 'DIR_NOT_WRITABLE');
-        }
-        
-        if (empty($error)) {
-            // Sanitize filename
-            $originalName = basename($_FILES['document_file']['name']);
-            $fileName = 'doc_' . $userId . '_' . time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $originalName);
-            $uploadPathAbsolute = $uploadDirAbsolute . $fileName;
-            $uploadPathRelative = $uploadDirRelative . $fileName;
-            
-            // Validate file type
-            $allowedTypes = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
-            $fileExtension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-            
-            if (!in_array($fileExtension, $allowedTypes)) {
-                $error = 'Invalid file type. Allowed types: PDF, DOC, DOCX, JPG, PNG';
-                $logger->logUploadError($error, $userId, $originalName, 'INVALID_TYPE');
-            } elseif ($_FILES['document_file']['size'] > 10000000) {
-                $error = 'File size too large (max 10MB). Your file: ' . round($_FILES['document_file']['size'] / 1024 / 1024, 2) . 'MB';
-                $logger->logUploadError($error, $userId, $originalName, 'FILE_TOO_LARGE');
-            } elseif ($_FILES['document_file']['size'] == 0) {
-                $error = 'File is empty (0 bytes)';
-                $logger->logUploadError($error, $userId, $originalName, 'EMPTY_FILE');
-            } else {
-                // Attempt to move uploaded file (use absolute path)
-                if (move_uploaded_file($_FILES['document_file']['tmp_name'], $uploadPathAbsolute)) {
-                    // Set proper file permissions
-                    chmod($uploadPathAbsolute, 0644);
+        if (in_array($fileExtension, $allowedTypes) && $_FILES['document_file']['size'] <= 10000000) {
+            if (move_uploaded_file($_FILES['document_file']['tmp_name'], $uploadPath)) {
+                try {
+                    // Save document info to database
+                    $stmt = $db->prepare("
+                        INSERT INTO file_uploads (user_id, file_name, original_name, file_path, file_type, file_size, category) 
+                        VALUES (?, ?, ?, ?, ?, ?, 'document')
+                    ");
+                    $stmt->execute([
+                        $userId, 
+                        $fileName, 
+                        $documentName ?: $_FILES['document_file']['name'], 
+                        $uploadPath, 
+                        $fileExtension, 
+                        $_FILES['document_file']['size']
+                    ]);
                     
-                    try {
-                        // Save document info to database (use relative path for web access)
-                        $stmt = $db->prepare("
-                            INSERT INTO file_uploads (user_id, file_name, original_name, file_path, file_type, file_size, category) 
-                            VALUES (?, ?, ?, ?, ?, ?, 'document')
-                        ");
-                        $stmt->execute([
-                            $userId, 
-                            $fileName, 
-                            $documentName ?: $originalName, 
-                            $uploadPathRelative,  // Use relative path for database
-                            $fileExtension, 
-                            $_FILES['document_file']['size']
-                        ]);
-                        
-                        // Log activity
-                        logActivity($userId, 'document_upload', 'file_uploads', $db->lastInsertId());
-                        
-                        $success = 'Document uploaded successfully!';
-                        
-                        // Log success for debugging
-                        $logger->logError('UPLOAD_SUCCESS', 'Document uploaded successfully', __FILE__, __LINE__, $userId, [
-                            'file_name' => $fileName,
-                            'file_path_db' => $uploadPathRelative,
-                            'file_size' => $_FILES['document_file']['size']
-                        ]);
-                    } catch (Exception $e) {
-                        $error = 'Failed to save document info: ' . $e->getMessage();
-                        $logger->logDatabaseError($error, 'INSERT file_uploads', $userId);
-                        
-                        // Clean up uploaded file if database insert failed
-                        if (file_exists($uploadPathAbsolute)) {
-                            unlink($uploadPathAbsolute);
-                        }
-                    }
-                } else {
-                    $error = 'Failed to move uploaded file. Check server permissions.';
-                    $logger->logUploadError($error, $userId, $originalName, 'MOVE_FAILED');
+                    // Log activity
+                    logActivity($userId, 'document_upload', 'file_uploads', $db->lastInsertId());
+                    
+                    $success = 'Document uploaded successfully!';
+                } catch (Exception $e) {
+                    $error = 'Failed to save document info: ' . $e->getMessage();
                 }
+            } else {
+                $error = 'Failed to upload document';
             }
+        } else {
+            $error = 'Invalid file type or size too large (max 10MB)';
         }
+    } else {
+        $error = 'Please select a file to upload';
     }
 }
 
@@ -170,23 +93,6 @@ $stmt = $db->prepare("
 ");
 $stmt->execute([$userId]);
 $documents = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Debug: Log what documents were found
-if (isset($_GET['debug'])) {
-    echo "<pre style='background: #000; color: #0f0; padding: 20px; margin: 20px;'>";
-    echo "Total documents in DB: " . $totalDocuments . "\n";
-    echo "Documents fetched: " . count($documents) . "\n\n";
-    foreach ($documents as $doc) {
-        echo "ID: " . $doc['id'] . "\n";
-        echo "File Name: " . $doc['file_name'] . "\n";
-        echo "Original Name: " . $doc['original_name'] . "\n";
-        echo "File Path: " . $doc['file_path'] . "\n";
-        echo "File exists: " . (file_exists($doc['file_path']) ? 'YES' : 'NO') . "\n";
-        echo "File exists (from employee dir): " . (file_exists(__DIR__ . '/' . $doc['file_path']) ? 'YES' : 'NO') . "\n";
-        echo "---\n";
-    }
-    echo "</pre>";
-}
 ?>
 
 <!DOCTYPE html>
@@ -352,35 +258,6 @@ if (isset($_GET['debug'])) {
                     <div class="alert alert-danger alert-dismissible fade show">
                         <i class="fas fa-exclamation-circle me-2"></i><?= htmlspecialchars($error) ?>
                         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                    </div>
-                <?php endif; ?>
-                
-                <!-- Debug info for troubleshooting -->
-                <div class="alert alert-warning">
-                    <strong>Document Status:</strong><br>
-                    Total documents in database: <?= $totalDocuments ?><br>
-                    Documents on this page: <?= count($documents) ?><br>
-                    Your user ID: <?= $userId ?><br>
-                    <a href="?debug=1" class="btn btn-sm btn-info mt-2">Show Detailed Debug Info</a>
-                </div>
-                
-                <?php if (isset($_POST['upload_document'])): ?>
-                    <div class="alert alert-info">
-                        <strong>Upload Debug Info:</strong><br>
-                        POST received: Yes<br>
-                        File in $_FILES: <?= isset($_FILES['document_file']) ? 'Yes' : 'No' ?><br>
-                        <?php if (isset($_FILES['document_file'])): ?>
-                            File name: <?= htmlspecialchars($_FILES['document_file']['name'] ?? 'none') ?><br>
-                            File size: <?= isset($_FILES['document_file']['size']) ? number_format($_FILES['document_file']['size']) . ' bytes' : 'unknown' ?><br>
-                            Upload error code: <?= $_FILES['document_file']['error'] ?? 'none' ?> (0 = success)<br>
-                        <?php endif; ?>
-                        Upload dir exists: <?= is_dir(__DIR__ . '/../uploads/') ? 'Yes' : 'No' ?><br>
-                        Upload dir writable: <?= is_writable(__DIR__ . '/../uploads/') ? 'Yes' : 'No' ?><br>
-                        PHP upload_max_filesize: <?= ini_get('upload_max_filesize') ?><br>
-                        PHP post_max_size: <?= ini_get('post_max_size') ?><br>
-                        <?php if ($success): ?>
-                            <strong class="text-success">✓ Upload successful! Refresh page to see document.</strong>
-                        <?php endif; ?>
                     </div>
                 <?php endif; ?>
 
