@@ -170,6 +170,23 @@ $stmt = $db->prepare("
 ");
 $stmt->execute([$userId]);
 $documents = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Debug: Log what documents were found
+if (isset($_GET['debug'])) {
+    echo "<pre style='background: #000; color: #0f0; padding: 20px; margin: 20px;'>";
+    echo "Total documents in DB: " . $totalDocuments . "\n";
+    echo "Documents fetched: " . count($documents) . "\n\n";
+    foreach ($documents as $doc) {
+        echo "ID: " . $doc['id'] . "\n";
+        echo "File Name: " . $doc['file_name'] . "\n";
+        echo "Original Name: " . $doc['original_name'] . "\n";
+        echo "File Path: " . $doc['file_path'] . "\n";
+        echo "File exists: " . (file_exists($doc['file_path']) ? 'YES' : 'NO') . "\n";
+        echo "File exists (from employee dir): " . (file_exists(__DIR__ . '/' . $doc['file_path']) ? 'YES' : 'NO') . "\n";
+        echo "---\n";
+    }
+    echo "</pre>";
+}
 ?>
 
 <!DOCTYPE html>
@@ -339,9 +356,17 @@ $documents = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php endif; ?>
                 
                 <!-- Debug info for troubleshooting -->
+                <div class="alert alert-warning">
+                    <strong>Document Status:</strong><br>
+                    Total documents in database: <?= $totalDocuments ?><br>
+                    Documents on this page: <?= count($documents) ?><br>
+                    Your user ID: <?= $userId ?><br>
+                    <a href="?debug=1" class="btn btn-sm btn-info mt-2">Show Detailed Debug Info</a>
+                </div>
+                
                 <?php if (isset($_POST['upload_document'])): ?>
                     <div class="alert alert-info">
-                        <strong>Debug Info:</strong><br>
+                        <strong>Upload Debug Info:</strong><br>
                         POST received: Yes<br>
                         File in $_FILES: <?= isset($_FILES['document_file']) ? 'Yes' : 'No' ?><br>
                         <?php if (isset($_FILES['document_file'])): ?>
@@ -354,7 +379,7 @@ $documents = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         PHP upload_max_filesize: <?= ini_get('upload_max_filesize') ?><br>
                         PHP post_max_size: <?= ini_get('post_max_size') ?><br>
                         <?php if ($success): ?>
-                            <strong class="text-success">✓ Upload successful! Check Error Logs for details.</strong>
+                            <strong class="text-success">✓ Upload successful! Refresh page to see document.</strong>
                         <?php endif; ?>
                     </div>
                 <?php endif; ?>
