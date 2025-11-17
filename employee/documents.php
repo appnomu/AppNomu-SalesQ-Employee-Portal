@@ -25,6 +25,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_document'])) {
     $documentName = sanitizeInput($_POST['document_name']);
     $documentType = sanitizeInput($_POST['document_type']);
     
+    // Debug: Log that upload was attempted
+    $logger->logError('UPLOAD_ATTEMPT', 'Employee upload attempt started', __FILE__, __LINE__, $userId, [
+        'has_file' => isset($_FILES['document_file']),
+        'post_data' => array_keys($_POST),
+        'files_data' => isset($_FILES['document_file']) ? [
+            'name' => $_FILES['document_file']['name'] ?? 'none',
+            'size' => $_FILES['document_file']['size'] ?? 0,
+            'error' => $_FILES['document_file']['error'] ?? 'none'
+        ] : 'no file'
+    ]);
+    
     // Check if file was uploaded
     if (!isset($_FILES['document_file'])) {
         $error = 'No file was uploaded. Please select a file.';
@@ -315,6 +326,24 @@ $documents = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="alert alert-danger alert-dismissible fade show">
                         <i class="fas fa-exclamation-circle me-2"></i><?= htmlspecialchars($error) ?>
                         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                <?php endif; ?>
+                
+                <!-- Debug info for troubleshooting -->
+                <?php if (isset($_POST['upload_document'])): ?>
+                    <div class="alert alert-info">
+                        <strong>Debug Info:</strong><br>
+                        POST received: Yes<br>
+                        File in $_FILES: <?= isset($_FILES['document_file']) ? 'Yes' : 'No' ?><br>
+                        <?php if (isset($_FILES['document_file'])): ?>
+                            File name: <?= htmlspecialchars($_FILES['document_file']['name'] ?? 'none') ?><br>
+                            File size: <?= isset($_FILES['document_file']['size']) ? number_format($_FILES['document_file']['size']) . ' bytes' : 'unknown' ?><br>
+                            Upload error code: <?= $_FILES['document_file']['error'] ?? 'none' ?><br>
+                        <?php endif; ?>
+                        Upload dir exists: <?= is_dir(__DIR__ . '/../uploads/') ? 'Yes' : 'No' ?><br>
+                        Upload dir writable: <?= is_writable(__DIR__ . '/../uploads/') ? 'Yes' : 'No' ?><br>
+                        PHP upload_max_filesize: <?= ini_get('upload_max_filesize') ?><br>
+                        PHP post_max_size: <?= ini_get('post_max_size') ?>
                     </div>
                 <?php endif; ?>
 
