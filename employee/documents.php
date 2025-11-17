@@ -18,52 +18,50 @@ $userId = $_SESSION['user_id'];
 $success = '';
 $error = '';
 
-// Handle document upload - SIMPLIFIED TO MATCH ADMIN
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_document'])) {
-    $documentName = sanitizeInput($_POST['document_name']);
+// Handle document upload - USING WORKING TEST CODE
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['document_file']) && $_FILES['document_file']['error'] === UPLOAD_ERR_OK) {
+    $documentName = isset($_POST['document_name']) ? sanitizeInput($_POST['document_name']) : '';
     
-    if (isset($_FILES['document_file']) && $_FILES['document_file']['error'] === UPLOAD_ERR_OK) {
-        $uploadDir = '../uploads/';
-        $fileName = 'doc_' . $userId . '_' . time() . '_' . $_FILES['document_file']['name'];
-        $uploadPath = $uploadDir . $fileName;
-        
-        // Validate file type
-        $allowedTypes = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
-        $fileExtension = strtolower(pathinfo($_FILES['document_file']['name'], PATHINFO_EXTENSION));
-        
-        if (in_array($fileExtension, $allowedTypes) && $_FILES['document_file']['size'] <= 10000000) {
-            if (move_uploaded_file($_FILES['document_file']['tmp_name'], $uploadPath)) {
-                try {
-                    // Save document info to database
-                    $stmt = $db->prepare("
-                        INSERT INTO file_uploads (user_id, file_name, original_name, file_path, file_type, file_size, category) 
-                        VALUES (?, ?, ?, ?, ?, ?, 'document')
-                    ");
-                    $stmt->execute([
-                        $userId, 
-                        $fileName, 
-                        $documentName ?: $_FILES['document_file']['name'], 
-                        $uploadPath, 
-                        $fileExtension, 
-                        $_FILES['document_file']['size']
-                    ]);
-                    
-                    // Log activity
-                    logActivity($userId, 'document_upload', 'file_uploads', $db->lastInsertId());
-                    
-                    $success = 'Document uploaded successfully!';
-                } catch (Exception $e) {
-                    $error = 'Failed to save document info: ' . $e->getMessage();
+    $uploadDir = '../uploads/';
+    $fileName = 'doc_' . $userId . '_' . time() . '_' . $_FILES['document_file']['name'];
+    $uploadPath = $uploadDir . $fileName;
+    
+    // Validate file type
+    $allowedTypes = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
+    $fileExtension = strtolower(pathinfo($_FILES['document_file']['name'], PATHINFO_EXTENSION));
+    
+    if (in_array($fileExtension, $allowedTypes) && $_FILES['document_file']['size'] <= 10000000) {
+        if (move_uploaded_file($_FILES['document_file']['tmp_name'], $uploadPath)) {
+            try {
+                $stmt = $db->prepare("
+                    INSERT INTO file_uploads (user_id, file_name, original_name, file_path, file_type, file_size, category) 
+                    VALUES (?, ?, ?, ?, ?, ?, 'document')
+                ");
+                $stmt->execute([
+                    $userId,
+                    $fileName,
+                    $documentName ?: $_FILES['document_file']['name'],
+                    $uploadPath,
+                    $fileExtension,
+                    $_FILES['document_file']['size']
+                ]);
+                
+                logActivity($userId, 'document_upload', 'file_uploads', $db->lastInsertId());
+                $success = 'Document uploaded successfully!';
+            } catch (Exception $e) {
+                $error = 'Failed to save document info: ' . $e->getMessage();
+                if (file_exists($uploadPath)) {
+                    unlink($uploadPath);
                 }
-            } else {
-                $error = 'Failed to upload document';
             }
         } else {
-            $error = 'Invalid file type or size too large (max 10MB)';
+            $error = 'Failed to upload document';
         }
     } else {
-        $error = 'Please select a file to upload';
+        $error = 'Invalid file type or size too large (max 10MB)';
     }
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $error = 'Please select a file to upload';
 }
 
 // Document deletion is restricted to admin only
@@ -381,7 +379,7 @@ $documents = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <h5 class="modal-title"><i class="fas fa-upload me-2"></i>Upload Document</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="uploadForm" method="POST" enctype="multipart/form-data">
+                <form method="POST" enctype="multipart/form-data">
                     <div class="modal-body">
                         <div class="mb-3">
                             <label class="form-label">Document Name</label>
@@ -484,19 +482,22 @@ $documents = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
     
     // Handle file upload form submission
-    document.getElementById('uploadForm').addEventListener('submit', function(e) {
-        const submitBtn = this.querySelector('button[type="submit"]');
-        const originalText = submitBtn.innerHTML;
-        
-        submitBtn.disabled = true;
-        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Uploading...';
-        
-        // Re-enable button after form submission (in case of errors)
-        setTimeout(() => {
-            submitBtn.disabled = false;
-            submitBtn.innerHTML = originalText;
-        }, 5000);
-    });
+    const uploadForm = document.querySelector('#uploadModal form');
+    if (uploadForm) {
+        uploadForm.addEventListener('submit', function(e) {
+            const submitBtn = this.querySelector('button[type="submit"]');
+            const originalText = submitBtn.innerHTML;
+            
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Uploading...';
+            
+            // Re-enable button after form submission (in case of errors)
+            setTimeout(() => {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalText;
+            }, 5000);
+        });
+    }
     </script>
 </body>
 </html>
